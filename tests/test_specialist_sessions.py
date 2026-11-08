@@ -38,8 +38,8 @@ def _transfer_call(call_id: str, agent_name: str = "data_agent") -> dict:
     return {"name": f"transfer_to_{agent_name}", "id": call_id, "args": {}}
 
 
-def _python_call(call_id: str) -> dict:
-    return {"name": "python_executor", "id": call_id, "args": {"code": "df.shape"}}
+def _python_call(call_id: str, code: str = "df.shape") -> dict:
+    return {"name": "python_executor", "id": call_id, "args": {"code": code}}
 
 
 def _brief(
@@ -70,6 +70,7 @@ def _delegation(
     report: Optional[str] = None,
     agent_name: str = "data_agent",
     objective: str = OBJECTIVE,
+    code: str = "df.shape",
 ) -> List[BaseMessage]:
     '''A supervisor handoff, its brief, the specialist's tool work, and its report.'''
 
@@ -79,7 +80,7 @@ def _delegation(
     ]
     for number, result in enumerate(work, 1):
         work_id = f"{call_id}-w{number}"
-        messages.append(AIMessage(content="", name=agent_name, tool_calls=[_python_call(work_id)]))
+        messages.append(AIMessage(content="", name=agent_name, tool_calls=[_python_call(work_id, code)]))
         messages.append(ToolMessage(content=result, tool_call_id=work_id))
     if report is not None:
         messages.append(AIMessage(content=report, name=agent_name))
@@ -414,6 +415,29 @@ def test_single_oversized_span_keeps_only_its_brief_and_final_report(monkeypatch
     assert view[1].content == "TASK BRIEF for data_agent: brief t1"
     assert view[2].content == "final report one"
     assert "huge" not in _text(view)
+    _assert_pairs_intact(view)
+
+
+def test_continue_keeps_earlier_code_when_a_tool_result_is_large():
+    # The data agent's code lives in the python_executor tool-call args, while the bulky
+    # dataframe preview is the ToolMessage. One large earlier result must not evict the code.
+    code = "df = df[df['standard_type'] == 'IC50']  # " + "x" * 2000
+    big_result = "preview\n" + "y" * 44000
+    messages = [
+        *_delegation("t1", "data-1", work=[big_result], report="saved /tmp/clean.csv", code=code),
+        *_delegation("t2", "data-1", "continue", work=["current"]),
+    ]
+
+    view = _specialist_view(messages)
+    tool_args = "".join(
+        str(call.get("args") or "")
+        for message in view
+        for call in (getattr(message, "tool_calls", None) or [])
+    )
+
+    assert code in tool_args
+    assert "preview" in _text(view)
+    assert "y" * 44000 not in _text(view)
     _assert_pairs_intact(view)
 
 

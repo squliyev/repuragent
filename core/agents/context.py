@@ -320,12 +320,15 @@ def build_turn_anchors(
 
 # Bounding the live turn 
 
-def prune_tool_traffic(messages: Sequence[BaseMessage]) -> List[BaseMessage]:
+def prune_tool_traffic(
+    messages: Sequence[BaseMessage], *, recent_full: int = TOOL_RESULT_RECENT_FULL
+) -> List[BaseMessage]:
     '''Bound tool-result size without breaking tool_call pairing.
 
     Parameters:
     ---------
     messages (list): the live turn's messages, including tool calls and results.
+    recent_full (int): how many of the most recent results keep their full size; the rest are elided. Pass 0 to elide every result, e.g. for an earlier session whose bulky outputs matter less than the code that produced them.
 
     Returns:
     ----------
@@ -337,7 +340,7 @@ def prune_tool_traffic(messages: Sequence[BaseMessage]) -> List[BaseMessage]:
     ]
     if not tool_positions:
         return list(messages)
-    keep_full = set(tool_positions[-TOOL_RESULT_RECENT_FULL:]) if TOOL_RESULT_RECENT_FULL > 0 else set()
+    keep_full = set(tool_positions[-recent_full:]) if recent_full > 0 else set()
 
     pruned: List[BaseMessage] = []
     for index, message in enumerate(messages):
@@ -938,7 +941,9 @@ def _earlier_session_messages(
             continue
         span = _owned_span(messages, index, agent_name)
         brief = HumanMessage(content=coerce_text(getattr(span[0], "content", None)))
-        spans.append([brief, *prune_tool_traffic(span[1:])])
+        # Elide every earlier result: the code that ran matters more here than a bulky output,
+        # and one full-size result could otherwise push the span over budget and drop the code.
+        spans.append([brief, *prune_tool_traffic(span[1:], recent_full=0)])
 
     omitted = max(0, len(spans) - max(SPECIALIST_SESSION_MAX_SPANS, 0))
     spans = spans[omitted:]
